@@ -11,13 +11,14 @@
 # Common deps
 , git, swig, which, binutils, glibcLocales, cython
 # Common libraries
-, jemalloc, openmpi, astor, gast, grpc, sqlite, openssl, jsoncpp, re2
+, jemalloc, openmpi, astor, gast, grpc, sqlite, openssl, jsoncpp, re2, dnnl
 , curl, snappy, flatbuffers, icu, double-conversion, libpng, libjpeg, giflib
 # Upsteam by default includes cuda support since tensorflow 1.15. We could do
 # that in nix as well. It would make some things easier and less confusing, but
 # it would also make the default tensorflow package unfree. See
 # https://groups.google.com/a/tensorflow.org/forum/#!topic/developers/iRCt5m4qUz0
 , cudaSupport ? false, nvidia_x11 ? null, cudatoolkit ? null, cudnn ? null, nccl ? null
+, mklSupport ? false, mkl ? null, openblas ? null
 # XLA without CUDA is broken
 , xlaSupport ? cudaSupport
 # Default from ./configure script
@@ -36,8 +37,16 @@ assert cudaSupport -> nvidia_x11 != null
 # unsupported combination
 assert ! (stdenv.isDarwin && cudaSupport);
 
+assert (mklSupport && mkl != null) || openblas != null;
+
 let
   withTensorboard = pythonOlder "3.6";
+
+  # tensorflow will support dnnl 1.x in TF2.3
+  pinnedDnnl = dnnl.override {
+    inherit mklSupport;
+    version = "0.21.4";
+  };
 
   cudatoolkit_joined = symlinkJoin {
     name = "${cudatoolkit.name}-merged";
@@ -144,6 +153,7 @@ let
 
     buildInputs = [
       jemalloc
+      (if mklSupport then mkl else openblas)
       openmpi
       glibcLocales
       git
@@ -159,6 +169,7 @@ let
       flatbuffers
       icu
       double-conversion
+      pinnedDnnl
       libpng
       libjpeg
       giflib
@@ -285,7 +296,8 @@ let
     ];
     bazelBuildFlags = [
       "--config=opt" # optimize using the flags set in the configure phase
-    ];
+    ]
+    ++ lib.optionals (mklSupport) [ "--config=mkl" ];
 
     bazelTarget = "//tensorflow/tools/pip_package:build_pip_package //tensorflow/tools/lib_package:libtensorflow";
 
